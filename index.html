@@ -175,6 +175,7 @@
         <div class="card"><h3>문구</h3><input type="text" id="capText" placeholder="날짜·한마디 (예: 2026.07.09)" maxlength="24" oninput="updateCap()"></div>
         <button class="barbtn" id="saveBtn" style="margin-top:0">이미지로 저장</button>
         <p class="tip">저장된 이미지를 길게 눌러 '사진에 저장'을 선택하세요.</p>
+        <button class="barbtn" id="restartBtn" style="display:none;background:var(--ink)">처음으로 돌아가기</button>
       </div>
     </div>
   </div>
@@ -193,7 +194,7 @@ function show(id){
   document.getElementById(id).classList.add('active');
   if(id==='camScreen'){if(!state.stream)startCam();}else stopCam();
   if(id==='selectScreen')renderGallery();
-  if(id==='composeScreen')renderStrip();
+  if(id==='composeScreen'){renderStrip();document.getElementById('restartBtn').style.display='none';}
 }
 document.querySelectorAll('[data-back]').forEach(b=>{b.onclick=()=>show(b.dataset.back==='cam'?'camScreen':'selectScreen');});
 
@@ -413,6 +414,22 @@ document.getElementById('saveBtn').onclick=async()=>{
   else{const a=document.createElement('a');a.href=url;a.download='네컷.png';a.click();}
 
   btn.textContent=oldLabel;btn.disabled=false;
+  document.getElementById('restartBtn').style.display='block';
+};
+
+document.getElementById('restartBtn').onclick=()=>{
+  // wipe everything and go back to the camera
+  state.shots=[];state.selected=[];state.stickers=[];
+  state.caption='';state.filter='original';state.layout='col';
+  state.frame='#111111';state.capColor='#fff';
+  document.getElementById('capText').value='';
+  renderThumbs();
+  // reset filter/frame/layout selections in the UI
+  document.querySelectorAll('#filterList .filt').forEach((b,i)=>b.classList.toggle('sel',i===0));
+  document.querySelectorAll('#frameSwatches .swatch').forEach((b,i)=>b.classList.toggle('sel',i===0));
+  document.querySelectorAll('#layoutSeg button').forEach((b,i)=>b.classList.toggle('sel',i===0));
+  document.getElementById('restartBtn').style.display='none';
+  show('camScreen');
 };
 
 window.addEventListener('load',()=>{startCam();});
