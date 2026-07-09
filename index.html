@@ -76,8 +76,10 @@
   .strip.col .cell{width:100%;aspect-ratio:3/4;}
   .strip.grid2{padding:16px 16px 48px;display:grid;grid-template-columns:1fr 1fr;gap:8px;width:min(420px,80vw);}
   .strip.grid2 .cell{aspect-ratio:4/3;}
-  .cell{background:#d9d5cc;overflow:hidden;display:flex;align-items:center;justify-content:center;}
-  .cell img{width:100%;height:100%;object-fit:cover;}
+  .cell{background:#d9d5cc;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative;cursor:pointer;}
+  .cell img{width:100%;height:100%;object-fit:cover;transform-origin:center center;touch-action:none;}
+  .cell.adjusting{outline:3px solid var(--accent);outline-offset:-3px;}
+  .cell .adjtag{position:absolute;top:4px;left:4px;background:var(--accent);color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;z-index:3;pointer-events:none;}
   .cell .ph{font-size:12px;color:#8a8577;}
   .strip .caption{color:var(--capcolor,#fff);font-size:13px;font-weight:600;text-align:center;}
   .strip.col .caption{width:100%;margin-top:12px;}
@@ -106,6 +108,8 @@
   .stickerPicker button:active{background:#f0e6df;}
   input[type=text]{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:9px;font-size:14px;font-family:inherit;background:var(--paper);}
   input[type=text]:focus{outline:none;border-color:var(--ink);}
+  input[type=range]{-webkit-appearance:none;width:100%;height:4px;border-radius:2px;background:var(--line);outline:none;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:var(--accent);cursor:pointer;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.25);}
   .tip{font-size:12px;color:var(--muted);text-align:center;margin-top:12px;line-height:1.5;}
   input[type=file]{display:none;}
 </style>
@@ -163,6 +167,15 @@
         </div>
       </div>
       <div class="panel">
+        <div class="card"><h3>사진 조정 <span style="text-transform:none;letter-spacing:0;font-weight:400">— 프레임의 칸을 탭해서 선택</span></h3>
+          <div id="adjHint" style="font-size:13px;color:var(--muted);line-height:1.5;">조정할 칸을 탭하세요. 선택한 사진은 드래그로 위치를 옮기고, 아래 슬라이더로 크기를 바꿀 수 있어요.</div>
+          <div id="adjControls" style="display:none;">
+            <div style="font-size:13px;font-weight:700;margin-bottom:8px;"><span id="adjWhich">1번 칸</span> 조정 중</div>
+            <label style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:6px;">크기 <span id="zoomVal">100%</span></label>
+            <input type="range" id="zoomSlider" min="100" max="300" value="100" style="width:100%;">
+            <button id="adjReset" style="margin-top:12px;width:100%;padding:9px;font-size:13px;font-weight:600;border:1px solid var(--line);background:var(--paper);border-radius:9px;cursor:pointer;">이 칸 원래대로</button>
+          </div>
+        </div>
         <div class="card"><h3>배치</h3>
           <div class="seg" id="layoutSeg">
             <button data-layout="col" class="sel">세로 4컷</button>
@@ -187,14 +200,17 @@
 
 <script>
 const state={stream:null,facing:'user',shots:[],selected:[],
-  frame:'#111111',capColor:'#fff',caption:'',filter:'original',layout:'col',stickers:[]};
+  frame:'#111111',capColor:'#fff',caption:'',filter:'original',layout:'col',stickers:[],
+  transforms:{}, activeCell:-1};
+// transforms[cellIndex] = {zoom:1, tx:0, ty:0}  (tx/ty as fraction of cell size, -1..1)
+function getT(i){ if(!state.transforms[i]) state.transforms[i]={zoom:1,tx:0,ty:0}; return state.transforms[i]; }
 
 function show(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   if(id==='camScreen'){if(!state.stream)startCam();}else stopCam();
   if(id==='selectScreen')renderGallery();
-  if(id==='composeScreen'){renderStrip();document.getElementById('restartBtn').style.display='none';}
+  if(id==='composeScreen'){state.activeCell=-1;document.getElementById('adjHint').style.display='block';document.getElementById('adjControls').style.display='none';renderStrip();document.getElementById('restartBtn').style.display='none';}
 }
 document.querySelectorAll('[data-back]').forEach(b=>{b.onclick=()=>show(b.dataset.back==='cam'?'camScreen':'selectScreen');});
 
@@ -346,11 +362,90 @@ function renderStrip(){
   strip.style.setProperty('--frame',state.frame);
   strip.style.setProperty('--capcolor',state.capColor);
   let html='';
-  state.selected.forEach((si)=>{html+=`<div class="cell"><img src="${state.shots[si]}" style="filter:${cssFilter()}"></div>`;});
+  state.selected.forEach((si,idx)=>{
+    html+=`<div class="cell" data-idx="${idx}"><img src="${state.shots[si]}" style="filter:${cssFilter()}"></div>`;
+  });
   html+=`<div class="caption" style="color:${state.capColor}">${state.caption}</div>`;
   strip.innerHTML=html;
+  // apply transforms + wire up interactions
+  strip.querySelectorAll('.cell').forEach(cell=>{
+    const idx=+cell.dataset.idx;
+    const img=cell.querySelector('img');
+    applyCellTransform(img,idx);
+    if(idx===state.activeCell){
+      cell.classList.add('adjusting');
+      const tag=document.createElement('div');tag.className='adjtag';tag.textContent='조정 중';cell.appendChild(tag);
+    }
+    cell.addEventListener('click',(e)=>{ if(cell._dragged>6)return; selectCell(idx); });
+    makeCellDraggable(cell,img,idx);
+  });
   renderStickers();
 }
+function applyCellTransform(img,idx){
+  const t=getT(idx);
+  img.style.transform=`translate(${t.tx*100}%,${t.ty*100}%) scale(${t.zoom})`;
+}
+function selectCell(idx){
+  state.activeCell=idx;
+  document.getElementById('adjHint').style.display='none';
+  document.getElementById('adjControls').style.display='block';
+  document.getElementById('adjWhich').textContent=(idx+1)+'번 칸';
+  const t=getT(idx);
+  const zs=document.getElementById('zoomSlider');
+  zs.value=Math.round(t.zoom*100);
+  document.getElementById('zoomVal').textContent=Math.round(t.zoom*100)+'%';
+  // re-render to show the outline on the right cell
+  document.querySelectorAll('.cell').forEach(c=>{c.classList.toggle('adjusting',+c.dataset.idx===idx);
+    const old=c.querySelector('.adjtag');if(old)old.remove();
+    if(+c.dataset.idx===idx){const tag=document.createElement('div');tag.className='adjtag';tag.textContent='조정 중';c.appendChild(tag);}});
+}
+document.getElementById('zoomSlider').addEventListener('input',(e)=>{
+  if(state.activeCell<0)return;
+  const t=getT(state.activeCell);
+  t.zoom=(+e.target.value)/100;
+  document.getElementById('zoomVal').textContent=(+e.target.value)+'%';
+  clampT(state.activeCell);
+  const img=document.querySelector(`.cell[data-idx="${state.activeCell}"] img`);
+  if(img)applyCellTransform(img,state.activeCell);
+});
+document.getElementById('adjReset').addEventListener('click',()=>{
+  if(state.activeCell<0)return;
+  state.transforms[state.activeCell]={zoom:1,tx:0,ty:0};
+  document.getElementById('zoomSlider').value=100;
+  document.getElementById('zoomVal').textContent='100%';
+  const img=document.querySelector(`.cell[data-idx="${state.activeCell}"] img`);
+  if(img)applyCellTransform(img,state.activeCell);
+});
+function clampT(idx){
+  const t=getT(idx);
+  // limit panning so the image edge can't move inside the cell
+  const lim=Math.max(0,(t.zoom-1)/2);
+  t.tx=Math.max(-lim,Math.min(lim,t.tx));
+  t.ty=Math.max(-lim,Math.min(lim,t.ty));
+}
+function makeCellDraggable(cell,img,idx){
+  let sx,sy,otx,oty,drag=false;
+  cell._dragged=0;
+  const start=(x,y)=>{ if(state.activeCell!==idx)return; drag=true;sx=x;sy=y;const t=getT(idx);otx=t.tx;oty=t.ty;cell._dragged=0; };
+  const move=(x,y)=>{ if(!drag)return; const t=getT(idx);
+    const rect=cell.getBoundingClientRect();
+    t.tx=otx+(x-sx)/rect.width; t.ty=oty+(y-sy)/rect.height;
+    cell._dragged=Math.max(cell._dragged,Math.abs(x-sx)+Math.abs(y-sy));
+    clampT(idx); applyCellTransform(img,idx); };
+  const end=()=>{drag=false;};
+  cell.addEventListener('touchstart',e=>{const p=e.touches[0];start(p.clientX,p.clientY);},{passive:true});
+  cell.addEventListener('touchmove',e=>{const p=e.touches[0];move(p.clientX,p.clientY);if(drag)e.preventDefault();},{passive:false});
+  cell.addEventListener('touchend',end);
+  cell.addEventListener('mousedown',e=>{start(e.clientX,e.clientY);});
+  window.addEventListener('mousemove',e=>move(e.clientX,e.clientY));
+  window.addEventListener('mouseup',end);
+  // pinch to zoom
+  let pd=0,pz=1;
+  cell.addEventListener('touchstart',e=>{ if(e.touches.length===2){ if(state.activeCell!==idx)selectCell(idx); pd=dist(e.touches);pz=getT(idx).zoom; } },{passive:true});
+  cell.addEventListener('touchmove',e=>{ if(e.touches.length===2&&pd){ e.preventDefault(); const t=getT(idx); t.zoom=Math.max(1,Math.min(3,pz*dist(e.touches)/pd)); clampT(idx); applyCellTransform(img,idx);
+    if(state.activeCell===idx){document.getElementById('zoomSlider').value=Math.round(t.zoom*100);document.getElementById('zoomVal').textContent=Math.round(t.zoom*100)+'%';} } },{passive:false});
+}
+function dist(t){const dx=t[0].clientX-t[1].clientX,dy=t[0].clientY-t[1].clientY;return Math.hypot(dx,dy);}
 
 /* save */
 document.getElementById('saveBtn').onclick=async()=>{
@@ -386,12 +481,19 @@ document.getElementById('saveBtn').onclick=async()=>{
   ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
   ctx.fillStyle=state.frame;ctx.fillRect(0,0,W,H);
 
-  // 3) draw each photo at full quality (cover-fit into its cell)
+  // 3) draw each photo at full quality (cover-fit + per-cell zoom/pan)
   imgs.forEach((im,i)=>{
     const c=cells[i];
+    const t=getT(i);
     ctx.save();ctx.beginPath();ctx.rect(c.x,c.y,c.w,c.h);ctx.clip();ctx.filter=cssFilter();
-    const ar=im.width/im.height,tr=c.w/c.h;let dw,dh,dx,dy;
-    if(ar>tr){dh=c.h;dw=c.h*ar;dx=c.x-(dw-c.w)/2;dy=c.y;}else{dw=c.w;dh=c.w/ar;dx=c.x;dy=c.y-(dh-c.h)/2;}
+    const ar=im.width/im.height,tr=c.w/c.h;let bw,bh;
+    // base cover-fit size
+    if(ar>tr){bh=c.h;bw=c.h*ar;}else{bw=c.w;bh=c.w/ar;}
+    // apply zoom
+    const dw=bw*t.zoom,dh=bh*t.zoom;
+    // center then apply pan (t.tx/t.ty are fractions of cell size, matching CSS translate %)
+    const dx=c.x+(c.w-dw)/2 + t.tx*c.w;
+    const dy=c.y+(c.h-dh)/2 + t.ty*c.h;
     ctx.drawImage(im,dx,dy,dw,dh);ctx.restore();
   });
 
@@ -422,7 +524,10 @@ document.getElementById('restartBtn').onclick=()=>{
   state.shots=[];state.selected=[];state.stickers=[];
   state.caption='';state.filter='original';state.layout='col';
   state.frame='#111111';state.capColor='#fff';
+  state.transforms={};state.activeCell=-1;
   document.getElementById('capText').value='';
+  document.getElementById('adjHint').style.display='block';
+  document.getElementById('adjControls').style.display='none';
   renderThumbs();
   // reset filter/frame/layout selections in the UI
   document.querySelectorAll('#filterList .filt').forEach((b,i)=>b.classList.toggle('sel',i===0));
