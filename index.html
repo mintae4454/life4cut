@@ -86,7 +86,7 @@
   .stickerLayer{position:absolute;inset:0;pointer-events:none;}
   .sticker{position:absolute;font-size:38px;pointer-events:auto;cursor:grab;user-select:none;touch-action:none;line-height:1;
     filter:drop-shadow(0 2px 3px rgba(0,0,0,.3));}
-  .sticker .del{position:absolute;top:-8px;right:-10px;width:20px;height:20px;border-radius:50%;background:#c8462f;color:#fff;font-size:12px;display:none;align-items:center;justify-content:center;pointer-events:auto;}
+  .sticker .del{position:absolute;top:-10px;right:-12px;width:24px;height:24px;border-radius:50%;background:#c8462f;color:#fff;font-size:15px;font-weight:700;display:none;align-items:center;justify-content:center;pointer-events:auto;box-shadow:0 1px 4px rgba(0,0,0,.4);}
   .sticker.active .del{display:flex;}
   .sticker.active{outline:2px dashed rgba(200,70,47,.6);outline-offset:3px;}
 
@@ -171,7 +171,7 @@
         </div>
         <div class="card"><h3>프레임 색</h3><div class="swatches" id="frameSwatches"></div></div>
         <div class="card"><h3>필터</h3><div class="filters" id="filterList"></div></div>
-        <div class="card"><h3>스티커 <span style="text-transform:none;letter-spacing:0;font-weight:400">— 탭하면 붙고, 드래그로 이동</span></h3><div class="stickerPicker" id="stickerPicker"></div></div>
+        <div class="card"><h3>스티커 <span style="text-transform:none;letter-spacing:0;font-weight:400">— 탭해서 붙이고, 드래그로 이동, 더블탭하면 삭제</span></h3><div class="stickerPicker" id="stickerPicker"></div></div>
         <div class="card"><h3>문구</h3><input type="text" id="capText" placeholder="날짜·한마디 (예: 2026.07.09)" maxlength="24" oninput="updateCap()"></div>
         <button class="barbtn" id="saveBtn" style="margin-top:0">이미지로 저장</button>
         <p class="tip">저장된 이미지를 길게 눌러 '사진에 저장'을 선택하세요.</p>
@@ -201,8 +201,21 @@ document.querySelectorAll('[data-back]').forEach(b=>{b.onclick=()=>show(b.datase
 const video=document.getElementById('video'),permInfo=document.getElementById('permInfo');
 async function startCam(){
   try{stopCam();
-    state.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:state.facing,width:{ideal:2160},height:{ideal:2880}},audio:false});
+    // request the highest resolution the device camera can provide
+    state.stream=await navigator.mediaDevices.getUserMedia({video:{
+      facingMode:state.facing,
+      width:{ideal:4096},
+      height:{ideal:4096}
+    },audio:false});
     video.srcObject=state.stream;permInfo.style.display='none';
+    // try to push the track to its maximum capability
+    try{
+      const track=state.stream.getVideoTracks()[0];
+      const caps=track.getCapabilities?track.getCapabilities():null;
+      if(caps&&caps.width&&caps.height){
+        await track.applyConstraints({width:{ideal:caps.width.max},height:{ideal:caps.height.max}});
+      }
+    }catch(_){}
   }catch(e){permInfo.style.display='block';}
 }
 function stopCam(){if(state.stream){state.stream.getTracks().forEach(t=>t.stop());state.stream=null;}}
@@ -221,10 +234,12 @@ function capture(){
   const cv=document.getElementById('cap-cv'),vw=video.videoWidth,vh=video.videoHeight,tr=3/4,ar=vw/vh;
   let sw,sh,sx,sy;
   if(ar>tr){sh=vh;sw=vh*tr;sx=(vw-sw)/2;sy=0;}else{sw=vw;sh=vw/tr;sx=0;sy=(vh-sh)/2;}
-  cv.width=1200;cv.height=1600;const ctx=cv.getContext('2d');
+  // keep the cropped region at its FULL native resolution — no downscaling
+  cv.width=Math.round(sw);cv.height=Math.round(sh);
+  const ctx=cv.getContext('2d');
   ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
-  if(state.facing==='user'){ctx.translate(1200,0);ctx.scale(-1,1);}
-  ctx.drawImage(video,sx,sy,sw,sh,0,0,1200,1600);
+  if(state.facing==='user'){ctx.translate(cv.width,0);ctx.scale(-1,1);}
+  ctx.drawImage(video,sx,sy,sw,sh,0,0,cv.width,cv.height);
   state.shots.push(cv.toDataURL('image/png'));renderThumbs();
 }
 document.getElementById('uploadBtn').onclick=()=>document.getElementById('file').click();
@@ -287,17 +302,33 @@ function renderStickers(){
     const el=document.createElement('div');el.className='sticker';el.textContent=st.em;
     el.style.left=st.x+'px';el.style.top=st.y+'px';
     const del=document.createElement('span');del.className='del';del.textContent='×';
-    del.onclick=(e)=>{e.stopPropagation();state.stickers=state.stickers.filter(s=>s.id!==st.id);renderStickers();};
+    const removeThis=(e)=>{e.stopPropagation();state.stickers=state.stickers.filter(s=>s.id!==st.id);renderStickers();};
+    del.onclick=removeThis;
+    del.addEventListener('touchend',removeThis);
     el.appendChild(del);
     el.onclick=(e)=>{e.stopPropagation();document.querySelectorAll('.sticker').forEach(s=>s.classList.remove('active'));el.classList.add('active');};
+    // double-tap / double-click to delete
+    let lastTap=0;
+    const tryDouble=(e)=>{
+      if(el._moved>8) return; // was a drag, not a tap
+      const now=Date.now();
+      if(now-lastTap<300){ // second tap within 300ms
+        e.preventDefault();e.stopPropagation();
+        state.stickers=state.stickers.filter(s=>s.id!==st.id);renderStickers();
+      }
+      lastTap=now;
+    };
+    el.addEventListener('touchend',tryDouble);
+    el.addEventListener('dblclick',(e)=>{e.stopPropagation();state.stickers=state.stickers.filter(s=>s.id!==st.id);renderStickers();});
     makeDraggable(el,st);
     layer.appendChild(el);
   });
 }
 function makeDraggable(el,st){
   let sx,sy,ox,oy,drag=false;
-  const start=(x,y)=>{drag=true;sx=x;sy=y;ox=st.x;oy=st.y;el.style.cursor='grabbing';};
-  const move=(x,y)=>{if(!drag)return;st.x=ox+(x-sx);st.y=oy+(y-sy);el.style.left=st.x+'px';el.style.top=st.y+'px';};
+  el._moved=0;
+  const start=(x,y)=>{drag=true;sx=x;sy=y;ox=st.x;oy=st.y;el._moved=0;el.style.cursor='grabbing';};
+  const move=(x,y)=>{if(!drag)return;const ddx=x-sx,ddy=y-sy;el._moved=Math.max(el._moved,Math.abs(ddx)+Math.abs(ddy));st.x=ox+ddx;st.y=oy+ddy;el.style.left=st.x+'px';el.style.top=st.y+'px';};
   const end=()=>{drag=false;el.style.cursor='grab';};
   el.addEventListener('touchstart',e=>{const t=e.touches[0];start(t.clientX,t.clientY);},{passive:true});
   el.addEventListener('touchmove',e=>{const t=e.touches[0];move(t.clientX,t.clientY);e.preventDefault();},{passive:false});
@@ -321,43 +352,67 @@ function renderStrip(){
 }
 
 /* save */
-document.getElementById('saveBtn').onclick=()=>{
-  const cv=document.getElementById('out-cv'),ctx=cv.getContext('2d');
-  const SS=3; // supersampling factor for crisp output
-  const pad=28,gap=16,capH=state.caption?50:22;
-  let Wc,Hc,cells=[];
+document.getElementById('saveBtn').onclick=async()=>{
+  const btn=document.getElementById('saveBtn');
+  const oldLabel=btn.textContent;btn.textContent='저장 중…';btn.disabled=true;
+
+  // 1) load all selected images to learn their true resolution
+  const imgs=await Promise.all(state.selected.map(si=>new Promise(res=>{
+    const im=new Image();im.onload=()=>res(im);im.src=state.shots[si];
+  })));
+
+  // 2) build the layout in REAL pixels, sized from the source photos
+  //    cell width follows the smallest source width so nothing is upscaled
+  const srcMinW=Math.min(...imgs.map(im=>im.width));      // e.g. ~1500-2000px
+  const cellW=Math.min(srcMinW,1400);                     // cap to keep file sane
+  const cellH_col=Math.round(cellW*4/3);
+  const cellH_g2=Math.round(cellW*3/4);
+  const pad=Math.round(cellW*0.10);
+  const gap=Math.round(cellW*0.055);
+  const capH=state.caption?Math.round(cellW*0.18):Math.round(cellW*0.08);
+
+  let W,H,cells=[];
   if(state.layout==='col'){
-    const cw=280,ch=cw*4/3;
-    Wc=pad*2+cw;Hc=pad+ch*4+gap*3+capH+pad;
-    for(let i=0;i<4;i++)cells.push({x:pad,y:pad+i*(ch+gap),w:cw,h:ch});
+    W=pad*2+cellW;H=pad+cellH_col*4+gap*3+capH+pad;
+    for(let i=0;i<4;i++)cells.push({x:pad,y:pad+i*(cellH_col+gap),w:cellW,h:cellH_col});
   }else{
-    const cw=220,ch=cw*3/4;
-    Wc=pad*2+cw*2+gap;Hc=pad+ch*2+gap+capH+pad;
-    for(let i=0;i<4;i++)cells.push({x:pad+(i%2)*(cw+gap),y:pad+Math.floor(i/2)*(ch+gap),w:cw,h:ch});
+    W=pad*2+cellW*2+gap;H=pad+cellH_g2*2+gap+capH+pad;
+    for(let i=0;i<4;i++)cells.push({x:pad+(i%2)*(cellW+gap),y:pad+Math.floor(i/2)*(cellH_g2+gap),w:cellW,h:cellH_g2});
   }
-  const W=Wc*SS,H=Hc*SS;
+
+  const cv=document.getElementById('out-cv'),ctx=cv.getContext('2d');
   cv.width=W;cv.height=H;
-  ctx.scale(SS,SS);
   ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
-  ctx.fillStyle=state.frame;ctx.fillRect(0,0,Wc,Hc);
-  // sticker layer maps 1:1 over the strip; scale strip px -> logical canvas px by width
+  ctx.fillStyle=state.frame;ctx.fillRect(0,0,W,H);
+
+  // 3) draw each photo at full quality (cover-fit into its cell)
+  imgs.forEach((im,i)=>{
+    const c=cells[i];
+    ctx.save();ctx.beginPath();ctx.rect(c.x,c.y,c.w,c.h);ctx.clip();ctx.filter=cssFilter();
+    const ar=im.width/im.height,tr=c.w/c.h;let dw,dh,dx,dy;
+    if(ar>tr){dh=c.h;dw=c.h*ar;dx=c.x-(dw-c.w)/2;dy=c.y;}else{dw=c.w;dh=c.w/ar;dx=c.x;dy=c.y-(dh-c.h)/2;}
+    ctx.drawImage(im,dx,dy,dw,dh);ctx.restore();
+  });
+
+  // 4) caption
+  ctx.filter='none';
+  ctx.fillStyle=state.capColor;ctx.textAlign='center';
+  ctx.font=`600 ${Math.round(cellW*0.09)}px -apple-system,sans-serif`;
+  ctx.fillText(state.caption,W/2,H-pad-Math.round(cellW*0.02));
+
+  // 5) stickers — map from on-screen strip px to real canvas px
   const stripEl=document.getElementById('strip');
-  const scale=Wc/stripEl.offsetWidth;
-  let done=0;const total=4;
-  const finish=()=>{
-    ctx.fillStyle=state.capColor;ctx.font='600 24px -apple-system,sans-serif';ctx.textAlign='center';ctx.fillText(state.caption,Wc/2,Hc-pad-4);
-    // draw stickers (st.x/st.y are top-left of the glyph in strip px)
-    ctx.textAlign='left';ctx.textBaseline='top';
-    state.stickers.forEach(st=>{ctx.font=(38*scale)+'px -apple-system,sans-serif';ctx.fillText(st.em,st.x*scale,st.y*scale);});
-    ctx.textBaseline='alphabetic';
-    const url=cv.toDataURL('image/png');const w=window.open();
-    if(w)w.document.write(`<img src="${url}" style="width:100%">`);else{const a=document.createElement('a');a.href=url;a.download='네컷.png';a.click();}
-  };
-  state.selected.forEach((si,i)=>{const c=cells[i];const im=new Image();
-    im.onload=()=>{ctx.save();ctx.beginPath();ctx.rect(c.x,c.y,c.w,c.h);ctx.clip();ctx.filter=cssFilter();
-      const ar=im.width/im.height,tr=c.w/c.h;let dw,dh,dx,dy;
-      if(ar>tr){dh=c.h;dw=c.h*ar;dx=c.x-(dw-c.w)/2;dy=c.y;}else{dw=c.w;dh=c.w/ar;dx=c.x;dy=c.y-(dh-c.h)/2;}
-      ctx.drawImage(im,dx,dy,dw,dh);ctx.restore();if(++done===total)finish();};im.src=state.shots[si];});
+  const scale=W/stripEl.offsetWidth;
+  ctx.textAlign='left';ctx.textBaseline='top';
+  state.stickers.forEach(st=>{ctx.font=(38*scale)+'px -apple-system,sans-serif';ctx.fillText(st.em,st.x*scale,st.y*scale);});
+  ctx.textBaseline='alphabetic';
+
+  const url=cv.toDataURL('image/png');
+  const w=window.open();
+  if(w)w.document.write(`<img src="${url}" style="width:100%">`);
+  else{const a=document.createElement('a');a.href=url;a.download='네컷.png';a.click();}
+
+  btn.textContent=oldLabel;btn.disabled=false;
 };
 
 window.addEventListener('load',()=>{startCam();});
