@@ -42,6 +42,10 @@
   .thumbs .t{width:52px;height:70px;border-radius:8px;overflow:hidden;flex:0 0 auto;border:2px solid rgba(255,255,255,.8);box-shadow:0 2px 8px rgba(0,0,0,.4);}
   .thumbs .t img{width:100%;height:100%;object-fit:cover;}
   .cam-bottom{display:flex;flex-direction:column;gap:14px;align-items:center;pointer-events:auto;}
+  .camfilters{display:flex;gap:8px;overflow-x:auto;max-width:100%;padding:2px 0;}
+  .camfilters button{flex:0 0 auto;padding:7px 14px;font-size:13px;font-weight:700;border-radius:20px;
+    border:1px solid rgba(255,255,255,.35);background:rgba(0,0,0,.4);backdrop-filter:blur(8px);color:#fff;cursor:pointer;white-space:nowrap;}
+  .camfilters button.sel{background:#fff;color:#111;border-color:#fff;}
   .cam-controls{display:flex;align-items:center;justify-content:center;gap:34px;width:100%;}
   .shutter{width:76px;height:76px;border-radius:50%;background:rgba(255,255,255,.25);border:4px solid #fff;cursor:pointer;display:flex;align-items:center;justify-content:center;}
   .shutter i{width:56px;height:56px;border-radius:50%;background:#fff;display:block;transition:.1s;}
@@ -143,6 +147,7 @@
       <div class="cnt-pill">촬영 <b id="shotCount">0</b>장</div>
     </div>
     <div class="cam-bottom">
+      <div class="camfilters" id="camFilters"></div>
       <div class="thumbs" id="thumbs"></div>
       <div class="cam-controls">
         <button class="cbtn" id="flipBtn" title="카메라 전환">⟳</button>
@@ -198,7 +203,7 @@
           </div>
         </div>
         <div class="card"><h3>프레임 색</h3><div class="swatches" id="frameSwatches"></div></div>
-        <div class="card"><h3>필터</h3><div class="filters" id="filterList"></div></div>
+        <div class="card"><h3>필터 <span style="text-transform:none;letter-spacing:0;font-weight:400">— 촬영 때 고른 필터에 추가로 더해져요</span></h3><div class="filters" id="filterList"></div></div>
         <div class="card"><h3>스티커 <span style="text-transform:none;letter-spacing:0;font-weight:400">— 탭해서 붙이고, 드래그로 이동, 더블탭하면 삭제</span></h3><div class="stickerPicker" id="stickerPicker"></div></div>
         <div class="card"><h3>문구</h3><input type="text" id="capText" placeholder="날짜·한마디 (예: 2026.07.09)" maxlength="24" oninput="updateCap()"></div>
         <button class="barbtn" id="saveBtn" style="margin-top:0">이미지로 저장</button>
@@ -216,9 +221,14 @@
 <script>
 const state={stream:null,facing:'user',shots:[],selected:[],
   frame:'#111111',capColor:'#fff',caption:'',filter:'original',layout:'col',stickers:[],
-  transforms:{}, activeCell:-1};
+  transforms:{}, activeCell:-1, camFilter:'original', shotFilters:[]};
 // transforms[cellIndex] = {zoom:1, tx:0, ty:0}  (tx/ty as fraction of cell size, -1..1)
+// shotFilters[shotIndex] = filter key applied at capture time
 function getT(i){ if(!state.transforms[i]) state.transforms[i]={zoom:1,tx:0,ty:0}; return state.transforms[i]; }
+// filter definitions shared by camera + compose
+const FILTERS={original:'none',bw:'grayscale(1)',sepia:'sepia(.7)',cool:'hue-rotate(-15deg) saturate(1.1)',warm:'sepia(.25) saturate(1.2)',fade:'contrast(.85) brightness(1.08) saturate(.8)'};
+const FILTER_LIST=[['original','원본'],['bw','흑백'],['sepia','세피아'],['cool','쿨톤'],['warm','웜톤'],['fade','페이드']];
+function filterCss(key){return FILTERS[key]||'none';}
 
 function show(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -231,6 +241,18 @@ document.querySelectorAll('[data-back]').forEach(b=>{b.onclick=()=>show(b.datase
 
 /* camera */
 const video=document.getElementById('video'),permInfo=document.getElementById('permInfo');
+/* build camera filter chips */
+const camFilterBar=document.getElementById('camFilters');
+FILTER_LIST.forEach(([k,n],i)=>{
+  const b=document.createElement('button');b.textContent=n;if(i===0)b.classList.add('sel');
+  b.onclick=()=>{
+    state.camFilter=k;
+    document.querySelectorAll('#camFilters button').forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+    video.style.filter=filterCss(k);
+  };
+  camFilterBar.appendChild(b);
+});
 async function startCam(){
   try{stopCam();
     // request the highest resolution the device camera can provide
@@ -290,12 +312,16 @@ function capture(){
   cv.width=vw;cv.height=vh;
   const ctx=cv.getContext('2d');
   ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
+  // bake the selected camera filter into the photo
+  ctx.filter=filterCss(state.camFilter);
   if(state.facing==='user'){ctx.translate(cv.width,0);ctx.scale(-1,1);}
   ctx.drawImage(video,0,0,vw,vh);
-  state.shots.push(cv.toDataURL('image/png'));renderThumbs();
+  state.shots.push(cv.toDataURL('image/png'));
+  state.shotFilters.push(state.camFilter);
+  renderThumbs();
 }
 document.getElementById('uploadBtn').onclick=()=>document.getElementById('file').click();
-document.getElementById('file').onchange=e=>{[...e.target.files].forEach(f=>{const r=new FileReader();r.onload=ev=>{state.shots.push(ev.target.result);renderThumbs();};r.readAsDataURL(f);});e.target.value='';};
+document.getElementById('file').onchange=e=>{[...e.target.files].forEach(f=>{const r=new FileReader();r.onload=ev=>{state.shots.push(ev.target.result);state.shotFilters.push('original');renderThumbs();};r.readAsDataURL(f);});e.target.value='';};
 function renderThumbs(){
   const t=document.getElementById('thumbs');t.innerHTML='';
   state.shots.slice(-10).forEach(src=>{const d=document.createElement('div');d.className='t';d.innerHTML=`<img src="${src}">`;t.appendChild(d);});
@@ -336,7 +362,7 @@ const filters=[{k:'original',n:'원본'},{k:'bw',n:'흑백'},{k:'sepia',n:'세�
 const fl=document.getElementById('filterList');
 filters.forEach((f,i)=>{const b=document.createElement('div');b.className='filt'+(i===0?' sel':'');b.textContent=f.n;
   b.onclick=()=>{document.querySelectorAll('.filt').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');state.filter=f.k;renderStrip();};fl.appendChild(b);});
-function cssFilter(){const m={bw:'grayscale(1)',sepia:'sepia(.7)',cool:'hue-rotate(-15deg) saturate(1.1)',warm:'sepia(.25) saturate(1.2)',fade:'contrast(.85) brightness(1.08) saturate(.8)'};return m[state.filter]||'none';}
+function cssFilter(){return filterCss(state.filter);}
 function updateCap(){state.caption=document.getElementById('capText').value;renderStrip();}
 
 /* stickers */
@@ -556,15 +582,17 @@ document.getElementById('saveBtn').onclick=async()=>{
 
 document.getElementById('restartBtn').onclick=()=>{
   // wipe everything and go back to the camera
-  state.shots=[];state.selected=[];state.stickers=[];
+  state.shots=[];state.selected=[];state.stickers=[];state.shotFilters=[];
   state.caption='';state.filter='original';state.layout='col';
   state.frame='#111111';state.capColor='#fff';
-  state.transforms={};state.activeCell=-1;
+  state.transforms={};state.activeCell=-1;state.camFilter='original';
   document.getElementById('capText').value='';
   document.getElementById('adjHint').style.display='block';
   document.getElementById('adjControls').style.display='none';
   renderThumbs();
   // reset filter/frame/layout selections in the UI
+  document.querySelectorAll('#camFilters button').forEach((b,i)=>b.classList.toggle('sel',i===0));
+  video.style.filter='none';
   document.querySelectorAll('#filterList .filt').forEach((b,i)=>b.classList.toggle('sel',i===0));
   document.querySelectorAll('#frameSwatches .swatch').forEach((b,i)=>b.classList.toggle('sel',i===0));
   document.querySelectorAll('#layoutSeg button').forEach((b,i)=>b.classList.toggle('sel',i===0));
