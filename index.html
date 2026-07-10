@@ -226,8 +226,11 @@ const state={stream:null,facing:'user',shots:[],selected:[],
 // shotFilters[shotIndex] = filter key applied at capture time
 function getT(i){ if(!state.transforms[i]) state.transforms[i]={zoom:1,tx:0,ty:0}; return state.transforms[i]; }
 // filter definitions shared by camera + compose
-const FILTERS={original:'none',bw:'grayscale(1)',sepia:'sepia(.7)',cool:'hue-rotate(-15deg) saturate(1.1)',warm:'sepia(.25) saturate(1.2)',fade:'contrast(.85) brightness(1.08) saturate(.8)'};
-const FILTER_LIST=[['original','원본'],['bw','흑백'],['sepia','세피아'],['cool','쿨톤'],['warm','웜톤'],['fade','페이드']];
+const FILTERS={original:'none',bw:'grayscale(1)',sepia:'sepia(.7)',cool:'hue-rotate(-15deg) saturate(1.1)',warm:'sepia(.25) saturate(1.2)',fade:'contrast(.85) brightness(1.08) saturate(.8)',
+  highkey:'brightness(1.18) contrast(.92) saturate(1.05)',
+  sunset:'sepia(.35) saturate(1.4) brightness(1.05) hue-rotate(-10deg)',
+  pink:'brightness(1.12) saturate(1.1) sepia(.2) contrast(.93) hue-rotate(300deg)'};
+const FILTER_LIST=[['original','원본'],['highkey','하이키'],['pink','핑크'],['sunset','노을'],['bw','흑백'],['sepia','세피아'],['cool','쿨톤'],['warm','웜톤'],['fade','페이드']];
 function filterCss(key){return FILTERS[key]||'none';}
 
 function show(id){
@@ -358,10 +361,9 @@ const frames=[
 const fw=document.getElementById('frameSwatches');
 frames.forEach((f,i)=>{const s=document.createElement('div');s.className='swatch'+(i===0?' sel':'');s.style.background=f.c;if(f.c==='#ffffff'||f.c==='#faf3e0')s.style.borderColor='#ddd';
   s.onclick=()=>{document.querySelectorAll('#frameSwatches .swatch').forEach(x=>x.classList.remove('sel'));s.classList.add('sel');state.frame=f.c;state.capColor=f.cap;renderStrip();};fw.appendChild(s);});
-const filters=[{k:'original',n:'원본'},{k:'bw',n:'흑백'},{k:'sepia',n:'세피아'},{k:'cool',n:'쿨톤'},{k:'warm',n:'웜톤'},{k:'fade',n:'페이드'}];
 const fl=document.getElementById('filterList');
-filters.forEach((f,i)=>{const b=document.createElement('div');b.className='filt'+(i===0?' sel':'');b.textContent=f.n;
-  b.onclick=()=>{document.querySelectorAll('.filt').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');state.filter=f.k;renderStrip();};fl.appendChild(b);});
+FILTER_LIST.forEach(([k,n],i)=>{const b=document.createElement('div');b.className='filt'+(i===0?' sel':'');b.textContent=n;
+  b.onclick=()=>{document.querySelectorAll('.filt').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');state.filter=k;renderStrip();};fl.appendChild(b);});
 function cssFilter(){return filterCss(state.filter);}
 function updateCap(){state.caption=document.getElementById('capText').value;renderStrip();}
 
